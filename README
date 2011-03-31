@@ -20,6 +20,12 @@ use netcat to listen on a specified port. e.g. /usr/bin/nc -l -p 31337
 Make sure to edit the password in fwalk.c
 
 
+=== TODO ===
+
+* Add daemon option to turn off logging. !!Do not use in the wild, the daemon currently logs to syslog!!
+* Add daemon command line options for password, process name, etc.
+* Add client command line options for icmp type and code.
+* Add client mode that brute foces and tries all ICMP types/codes.
 
 
 Written by Martin Kanarr, 2010
