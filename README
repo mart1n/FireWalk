@@ -1,0 +1,25 @@
+=== FireWalk ===
+
+A simple backdoor with the goal of circumventing network firewalls.
+
+
+The daemon process, fwalk.c, runs on the system that you're wanting to backdoor.
+It processes all incomming ICMP packets, looking for a password, ip address and
+port number in the payload. If the password matches, it establishes a TCP connection
+with the IP adress and port number specified and lanuches a root shell.
+
+You can craft the ICMP packet any way you like to initiate the connection. I've included
+a tool, summon.c, that you can use. It defaults to ICMP type 3, code 0, but can easily be
+changed to find an ICMP type that is not filtered by the backdoored system's firewall.
+
+One easy way to catch the connect-back with our root shell, is to use netcat. You can
+use netcat to listen on a specified port. e.g. /usr/bin/nc -l -p 31337
+
+=== Setup ===
+
+Make sure to edit the password in fwalk.c
+
+
+
+
+Written by Martin Kanarr, 2010
