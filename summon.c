@@ -25,7 +25,7 @@
 #include <arpa/inet.h>
 
 
-#define PASSLEN 8 
+#define PASSLEN 8
 
 //
 // Modify these to change the ICMP type and ICMP code.
